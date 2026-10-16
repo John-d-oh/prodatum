@@ -49,7 +49,7 @@ decl {extern PD_UI* ui;} {}
 
 decl {extern const char* filter_tooltip;} {} 
 
-Function {logbuffer_cb(void*)} {private C return_type void
+Function {logbuffer_cb(int, int, int, int, const char*, void*)} {private C return_type void
 } {
   code {if (ui->logbuf->length() >= LOG_BUFFER_SIZE)
 	ui->logbuf->remove(0, 10240);
@@ -60,7 +60,7 @@ if (!ui->scroll_lock->value())
 
 declblock {\#ifdef SYNCLOG} {after {\#endif}
 } {
-  Function {initlog_cb(void*)} {open private C return_type void
+  Function {initlog_cb(int, int, int, int, const char*, void*)} {open private C return_type void
   } {
     code {ui->i_log->insert_position(ui->init_log->length());
 ui->i_log->show_insert_position();} {}
@@ -4762,12 +4762,12 @@ o->label("Select...");
     }
     code {// midi log
         logbuf = new Fl_Text_Buffer(LOG_BUFFER_SIZE);
-        logbuf->add_modify_callback((Fl_Text_Modify_Cb) logbuffer_cb, 0);
+        logbuf->add_modify_callback(logbuffer_cb, 0);
         log->buffer(logbuf);
         // init log
         \#ifdef SYNCLOG
         init_log = new Fl_Text_Buffer(LOG_BUFFER_SIZE);
-        init_log->add_modify_callback((Fl_Text_Modify_Cb) initlog_cb, 0);
+        init_log->add_modify_callback(initlog_cb, 0);
         i_log->buffer(init_log);
         \#endif
         create_about();

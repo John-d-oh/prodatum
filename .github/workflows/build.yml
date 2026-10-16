@@ -2,178 +2,132 @@ name: Build
 
 on:
   workflow_dispatch:
-    inputs:
-      logLevel:
-        description: 'Log level'     
-        required: true
-        default: 'warning'
-      tags:
-        description: 'Manual'  
   push:
-    branches: [ "master", "dev" ]
+    branches: [ "master", "dev", "apple-silicon" ]
+    tags: [ "v*" ]
+  pull_request:
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   build_type: Release
 
 jobs:
   build:
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest] 
-        
+        include:
+          # macos-latest is an Apple Silicon runner; we build a universal
+          # (arm64 + x86_64) .app so one download works on every Mac.
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+
     steps:
-    - name: Clone prodatum repository 
-      uses: actions/checkout@v3
-    
-    - name: Clone fltk repository
-      uses: actions/checkout@v3
+    - name: Clone prodatum with FLTK and portmidi submodules
+      uses: actions/checkout@v4
       with:
-        repository: haxorhax/fltk
-        path: lib/fltk
-        
-    - name: Clone portmidi repository
-      uses: actions/checkout@v3
-      with:
-        repository: haxorhax/portmidi
-        path: lib/portmidi
+        submodules: recursive
 
-    - name: Install needed OS packages
-      run:  |
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              echo "$RUNNER_OS supported"
-            elif [ "$RUNNER_OS" == "Linux" ]; then
-              sudo apt install libasound2-dev
-              sudo apt install zlib1g-dev
-              sudo apt install libpng-dev
-              sudo apt install libgl1-mesa-dev
-              sudo apt install libglu1-mesa-dev
-              sudo apt install libx11-dev
-              sudo apt install libxinerama-dev
-              sudo apt install libxft-dev
-              sudo apt install libfontconfig-dev
-            elif [ "$RUNNER_OS" == "macOS" ]; then
-              echo "$RUNNER_OS not supported yet"
-            else
-              echo "$RUNNER_OS not supported"
-              exit 1
-            fi
-      shell: bash
+    - name: Install Linux packages
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libx11-dev libxext-dev libxinerama-dev libxft-dev libxcursor-dev \
+          libxfixes-dev libxrender-dev libfontconfig1-dev \
+          libgl1-mesa-dev libglu1-mesa-dev
 
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.build_type}}
+    - name: Configure (macOS, universal)
+      if: runner.os == 'macOS'
+      run: >
+        cmake -S . -B build
+        -DCMAKE_BUILD_TYPE=${{ env.build_type }}
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+    - name: Configure
+      if: runner.os != 'macOS'
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.build_type }}
 
     - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.build_type}}
-    
-    - name: Rename windows artifact
-      if: ${{ matrix.os == 'windows-latest' }}
-      run: mv ./build/${{env.build_type}}/prodatum.exe ./build/${{env.build_type}}/prodatum-win-x64.exe
-        
-    - name: Upload a windows build artifact
-      if: ${{ matrix.os == 'windows-latest' }}
-      uses: actions/upload-artifact@v3.1.0
+      run: cmake --build build --config ${{ env.build_type }} --parallel
+
+    # ----- macOS ------------------------------------------------------------
+    - name: Package macOS app
+      if: runner.os == 'macOS'
+      run: |
+        # Apple Silicon refuses to run unsigned arm64 code; an ad-hoc
+        # signature is enough for a local run (after clearing quarantine).
+        codesign --force --deep --sign - build/prodatum.app
+        lipo -info build/prodatum.app/Contents/MacOS/prodatum
+        codesign -dv build/prodatum.app
+        ditto -c -k --keepParent build/prodatum.app build/prodatum-macos-universal.zip
+
+    - name: Upload macOS artifact
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
       with:
-        name: prodatum-${{ matrix.os }}
-        path: ./build/${{env.build_type}}/prodatum-win-x64.exe
-    
-    - name: Rename linux artifact
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: mv ./build/prodatum ./build/prodatum-linux-x86_64
-      
-    - name: Upload a linux build artifact
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      uses: actions/upload-artifact@v3.1.0
+        name: prodatum-macos
+        path: build/prodatum-macos-universal.zip
+
+    # ----- Linux ------------------------------------------------------------
+    - name: Rename Linux artifact
+      if: runner.os == 'Linux'
+      run: mv build/prodatum build/prodatum-linux-x86_64
+
+    - name: Upload Linux artifact
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
       with:
-        name: prodatum-${{ matrix.os }}
-        path: ./build/prodatum-linux-x86_64
-    
-    - name: Rename macos artifact
-      if: ${{ matrix.os == 'macos-latest' }}
-      run: mv ./build/prodatum ./build/prodatum-macos-x64
-      
-    - name: Upload a macos build artifact
-      if: ${{ matrix.os == 'macos-latest' }}
-      uses: actions/upload-artifact@v3.1.0
+        name: prodatum-linux
+        path: build/prodatum-linux-x86_64
+
+    # ----- Windows ----------------------------------------------------------
+    - name: Rename Windows artifact
+      if: runner.os == 'Windows'
+      run: mv build/${{ env.build_type }}/prodatum.exe build/${{ env.build_type }}/prodatum-win-x64.exe
+
+    - name: Upload Windows artifact
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
       with:
-        name: prodatum-${{ matrix.os }}
-        path: ./build/prodatum-macos-x64
-        
+        name: prodatum-windows
+        path: build/${{ env.build_type }}/prodatum-win-x64.exe
+
   release:
     name: Prepare release draft
-    # Make sure (and wait until) the builds have succeeded
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write
+
     steps:
-      - name: Check if tag exists
-        if: ${{ !(github.event_name == 'workflow_dispatch') }}
-        # Note the ! - it will return 0 if the command fails, and 1 otherwise
-        run: '! git rev-parse "v${{steps.ref.outputs.version}}"'
-        
-      - name: Make release directory
-        run: mkdir ./release
-        
-      # First, download all resulting assets from the previous steps.
-      - name: Retrieve windows installers
-        uses: actions/download-artifact@v2
+      - name: Retrieve build artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: prodatum-windows-latest
-          path: ./release
-          
-      - name: Retrieve macOS images
-        uses: actions/download-artifact@v2
-        with:
-          name: prodatum-macos-latest
-          path: ./release
-          
-      - name: Retrieve Linux installers
-        uses: actions/download-artifact@v2
-        with:
-          name: prodatum-ubuntu-latest
-          path: ./release
-          
-      # Now we are set, we have all five release assets on the VM. It's time to
-      # create the SHA-checksums file and then upload everything!
-      - name: Generate SHA256 checksums
+          path: release
+          merge-multiple: true
+
+      - name: Generate and verify SHA256 checksums
+        working-directory: release
         run: |
-          cd ./release
           ls -al
-          sha256sum "prodatum-win-x64.exe" > "SHA256SUMS.txt"
-          sha256sum "prodatum-linux-x86_64" >> "SHA256SUMS.txt"
-          sha256sum "prodatum-macos-x64" >> "SHA256SUMS.txt"
-          cd ..
-          
-      - name: Verify checksums
-        run: |
-          cd ./release
+          sha256sum prodatum-win-x64.exe prodatum-linux-x86_64 prodatum-macos-universal.zip > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
-          cd ..
-          
-      # OTHERWISE: Create a new release draft
+
       - name: Create release draft
-        if: github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          # Populate the inputs of the release we already know
-          tag_name: v${{steps.ref.outputs.version}}
-          name: Release v${{steps.ref.outputs.version}}
-          body: Changelog
-          draft: true # Always create as draft, so that we can populate the remaining values easily
+          name: Release ${{ github.ref_name }}
+          draft: true
           files: |
-            ./release/prodatum-win-x64.exe
-            ./release/prodatum-linux-x86_64
-            ./release/prodatum-macos-x64
-            ./release/SHA256SUMS.txt
-
-
-        
+            release/prodatum-win-x64.exe
+            release/prodatum-linux-x86_64
+            release/prodatum-macos-universal.zip
+            release/SHA256SUMS.txt

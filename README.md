@@ -29,20 +29,55 @@
 
 # ***Build Process***
 
-### **Build Process -- [ git, CMake, FLTK, portmidi ]** 
+### **Requirements**
+- git, CMake >= 3.21 and a C++14 compiler
+- macOS: Xcode command line tools (`xcode-select --install`) and `brew install cmake`
+- Linux: `libasound2-dev libx11-dev libxext-dev libxinerama-dev libxft-dev libxcursor-dev libxfixes-dev libxrender-dev libfontconfig1-dev`
+- Windows: Visual Studio with the C++ workload
+
+FLTK and portmidi are git submodules (`lib/fltk`, `lib/portmidi`) tracking
+the upstream releases, so a recursive clone is all that is needed:
+
 ```bash
-git clone https://github.com/haxorhax/prodatum
-git clone https://github.com/haxorhax/fltk prodatum/lib/fltk
-git clone https://github.com/haxorhax/portmidi prodatum/lib/portmidi
+git clone --recurse-submodules https://github.com/John-d-oh/prodatum
 cd prodatum
 cmake -S . -B build
 cmake --build build --config Release
 ```
+
+If you already cloned without `--recurse-submodules`, run
+`git submodule update --init --recursive` first.
+
+### **macOS notes (Apple Silicon and Intel)**
+- The build produces `build/prodatum.app`, a proper application bundle. Pass
+  `-DPRODATUM_MACOS_BUNDLE=OFF` to CMake for a plain command-line executable.
+- It builds natively for the host architecture (arm64 on Apple Silicon). For a
+  universal binary that also runs on Intel Macs, configure with
+  `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`; the CI release does this.
+- The deployment target is macOS 11.0, the first release with Apple Silicon
+  support.
+- The release zip is ad-hoc signed, not notarized. On first launch macOS will
+  refuse it. Either right-click the app and choose Open, allow it in
+  System Settings > Privacy & Security, or clear the quarantine flag:
+  `xattr -dr com.apple.quarantine prodatum.app`
+- The portable `prodatum-config` folder is looked up in the current working
+  directory, which is not useful for an app bundle launched from the Finder;
+  in that case settings and sync files live in `~/.prodatum`.
 <br>
 <br>
 
 
 # ***Version Info***
+## *Version 2.1.3 - 10/16/26*
+> Builds natively on Apple Silicon and on current macOS (tested on macOS 27 / arm64)
+> FLTK and portmidi are now git submodules tracking upstream releases (FLTK 1.4.5, portmidi 2.0.8)
+> macOS build produces a proper .app bundle with icon and Retina support; CI ships a universal arm64+x86_64 app
+> Added release/acquire memory barriers to the MIDI ring buffer (required on ARM's weaker memory model)
+> Fixed the unknown-sysex hex dump in the sync log, which was always empty
+> CI updated to current GitHub Actions and release drafts are created from version tags
+###### Update provided by John-d-oh (https://github.com/John-d-oh/prodatum)
+<br>
+
 ## *Version 2.1.2 - 10/16/22*
 > Support for more than 300 arps (DRUM expansion has 400) 
 > Dumping more than 512 presets requires load to edit buffer first

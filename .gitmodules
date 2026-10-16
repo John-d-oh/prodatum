@@ -1,0 +1,6 @@
+[submodule "lib/fltk"]
+	path = lib/fltk
+	url = https://github.com/fltk/fltk.git
+[submodule "lib/portmidi"]
+	path = lib/portmidi
+	url = https://github.com/PortMidi/portmidi.git

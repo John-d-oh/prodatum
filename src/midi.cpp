@@ -421,9 +421,11 @@ static void process_midi_in(void*)
 			else
 			{
 				ui->init_log->append("\nprocess_midi_in: Received unknown sysex:\n");
-				char* __buffer = (char*) malloc(len * sizeof(char));
+				// two hex digits per byte plus terminating NUL
+				char* __buffer = (char*) malloc(len * 2 + 1);
+				__buffer[0] = 0;
 				for (unsigned int i = 0; i < len; i++)
-					snprintf(__buffer + i, 1, "%02hhX", *(sysex + i));
+					snprintf(__buffer + 2 * i, 3, "%02hhX", *(sysex + i));
 				ui->init_log->append(__buffer);
 				ui->init_log->append("\n");
 				free(__buffer);

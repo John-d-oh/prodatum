@@ -21,9 +21,21 @@
 */
 
 // slightly modified for prodatum to use unsigned char
+//
+// Memory ordering: the original code relied on `volatile` alone, which is
+// sufficient only on strongly ordered CPUs such as x86. On ARM (Apple
+// Silicon) the consumer could observe an advanced write_ptr before the
+// payload bytes written just before it, and vice versa for read_ptr. The
+// fences below give the same release/acquire pairing that upstream JACK
+// added to this ringbuffer: publish data before advancing a pointer, and
+// read a pointer before touching the data it guards.
 
 #include <stdlib.h>
 #include <string.h>
+#include <atomic>
+
+#define RB_FENCE_RELEASE() std::atomic_thread_fence(std::memory_order_release)
+#define RB_FENCE_ACQUIRE() std::atomic_thread_fence(std::memory_order_acquire)
 #ifdef USE_MLOCK
 #include <sys/mman.h>
 #endif /* USE_MLOCK */
@@ -103,6 +115,7 @@ jack_ringbuffer_read_space (const jack_ringbuffer_t * rb)
 
   w = rb->write_ptr;
   r = rb->read_ptr;
+  RB_FENCE_ACQUIRE();
 
   if (w > r) {
     return w - r;
@@ -122,6 +135,7 @@ jack_ringbuffer_write_space (const jack_ringbuffer_t * rb)
 
   w = rb->write_ptr;
   r = rb->read_ptr;
+  RB_FENCE_ACQUIRE();
 
   if (w > r) {
     return ((r - w + rb->size) & rb->size_mask) - 1;
@@ -160,10 +174,12 @@ jack_ringbuffer_read (jack_ringbuffer_t * rb, unsigned char *dest, size_t cnt)
   }
 
   memcpy (dest, &(rb->buf[rb->read_ptr]), n1);
+  RB_FENCE_RELEASE();
   rb->read_ptr = (rb->read_ptr + n1) & rb->size_mask;
 
   if (n2) {
     memcpy (dest + n1, &(rb->buf[rb->read_ptr]), n2);
+    RB_FENCE_RELEASE();
     rb->read_ptr = (rb->read_ptr + n2) & rb->size_mask;
   }
 
@@ -240,10 +256,12 @@ jack_ringbuffer_write (jack_ringbuffer_t * rb, const unsigned char *src, size_t 
   }
 
   memcpy (&(rb->buf[rb->write_ptr]), src, n1);
+  RB_FENCE_RELEASE();
   rb->write_ptr = (rb->write_ptr + n1) & rb->size_mask;
 
   if (n2) {
     memcpy (&(rb->buf[rb->write_ptr]), src + n1, n2);
+    RB_FENCE_RELEASE();
     rb->write_ptr = (rb->write_ptr + n2) & rb->size_mask;
   }
 
@@ -256,6 +274,7 @@ void
 jack_ringbuffer_read_advance (jack_ringbuffer_t * rb, size_t cnt)
 {
   size_t tmp = (rb->read_ptr + cnt) & rb->size_mask;
+  RB_FENCE_RELEASE();
   rb->read_ptr = tmp;
 }
 
@@ -265,6 +284,7 @@ void
 jack_ringbuffer_write_advance (jack_ringbuffer_t * rb, size_t cnt)
 {
   size_t tmp = (rb->write_ptr + cnt) & rb->size_mask;
+  RB_FENCE_RELEASE();
   rb->write_ptr = tmp;
 }
 
